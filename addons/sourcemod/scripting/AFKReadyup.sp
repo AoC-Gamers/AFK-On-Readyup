@@ -2,7 +2,8 @@
 #include <sourcemod>
 #include <sdktools>
 #include <colors>
-#include <autoexecconfig>
+
+#define AFKREADYUP_LIBRARY "afkreadyup"
 
 #undef REQUIRE_PLUGIN
 #include <readyup>
@@ -24,9 +25,7 @@ ConVar
 int
 	g_iPlayerAFK[MAXPLAYERS + 1],
 	g_iPrevButtons[MAXPLAYERS + 1],
-	g_iPrevMouse[MAXPLAYERS + 1][2],
-	g_iLastActivity[MAXPLAYERS + 1],
-	g_iLastMessageTime[MAXPLAYERS + 1];
+	g_iPrevMouse[MAXPLAYERS + 1][2];
 
 float
 	g_fPlayerLastPos[MAXPLAYERS + 1][3],
@@ -34,12 +33,21 @@ float
 
 Handle
 	g_hStartTimerAFK,
-	g_hKickTimer[MAXPLAYERS + 1];
+	g_hKickTimer[MAXPLAYERS + 1],
+	g_hFwdTrackingStarted,
+	g_hFwdTrackingStopped,
+	g_hFwdClientMoveToSpectator,
+	g_hFwdClientMovedToSpectator,
+	g_hFwdClientKick,
+	g_hFwdClientKicked;
 
 bool
 	g_bLateLoad,
 	g_bReadyUpAvailable,
-	g_bGamePaused = false;
+	g_bReadyFooterSpacerAdded,
+	g_bGamePaused		= false;
+
+int g_iReadyFooterIndex = -1;
 
 enum L4DTeam
 {
@@ -58,16 +66,16 @@ public Plugin myinfo =
 	name		= "AFK on Readyup",
 	author		= "lechuga, heize",
 	description = "Manage AFK players in the readyup",
-	version		= "1.1.6",
+	version		=	"1.2.0",
 	url			= "https://github.com/lechuga16/AFK-on-readyup"
 };
 
 /*****************************************************************
 			F O R W A R D   P U B L I C S
 *****************************************************************/
-
 public APLRes AskPluginLoad2(Handle hMyself, bool bLate, char[] sError, int iErr_max)
 {
+	AFKReadyup_RegisterApi();
 	g_bLateLoad = bLate;
 	return APLRes_Success;
 }
@@ -92,19 +100,18 @@ public void OnLibraryRemoved(const char[] sName)
 public void OnPluginStart()
 {
 	LoadTranslations("AFKReadyup.phrases");
-	g_cvarDebug	   = CreateConVar("sm_afk_debug", "0", "Debug messages", FCVAR_NONE, true, 0.0, true, 1.0);
+	g_cvarDebug		   = CreateConVar("sm_afk_debug", "0", "Debug messages", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_cvarEnable	   = CreateConVar("sm_afk_enable", "1", "Activate the plugin", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_cvarPlayerIgnore = CreateConVar("sm_afk_ignore", "1", "Ignore players ready", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	g_cvarTime	   = CreateConVar("sm_afk_time", "40", "Time to move players during readyup", FCVAR_NOTIFY, true, 0.0);
+	g_cvarTime		   = CreateConVar("sm_afk_time", "40", "Time to move players during readyup", FCVAR_NOTIFY, true, 0.0);
 	g_cvarReadyFooter  = CreateConVar("sm_afk_footer", "1", "Show ready footer (0 = disabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_cvarShowTimer	   = CreateConVar("sm_afk_show", "10", "Show timer to players (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
-	g_cvarKickDelay    = CreateConVar("sm_afk_kick_delay", "120", "Delay (in seconds) before kicking player from server after moving to spectator (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
+	g_cvarKickDelay	   = CreateConVar("sm_afk_kick_delay", "120", "Delay (in seconds) before kicking player from server after moving to spectator (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
 
 	AutoExecConfig(true, "AFKReadyup");
 
 	RegConsoleCmd("say", Command_Say);
 	RegConsoleCmd("say_team", Command_Say);
-	RegConsoleCmd("sm_afks", Cmd_AFKs);
 
 	HookEvent("entity_shoved", Event_PlayerAction_Attacker);
 	HookEvent("weapon_fire", Event_PlayerAction_UserID);
@@ -122,12 +129,28 @@ public void OnPluginStart()
 	AddCommandListener(OnCommandExecute, "pause");
 	AddCommandListener(OnCommandExecute, "unpause");
 
-	CreateTimer(10.0, KickTimer_Callback, 0, TIMER_REPEAT);
-
-	if(!g_bLateLoad)
+	if (!g_bLateLoad)
 		return;
 
 	g_bReadyUpAvailable = LibraryExists("readyup");
+}
+
+void AFKReadyup_RegisterApi()
+{
+	CreateNative("AFKReadyup_IsTrackingActive", Native_AFKReadyupIsTrackingActive);
+	CreateNative("AFKReadyup_GetClientSecondsRemaining", Native_AFKReadyupGetClientSecondsRemaining);
+	CreateNative("AFKReadyup_ResetClientTimer", Native_AFKReadyupResetClientTimer);
+	CreateNative("AFKReadyup_IsKickPending", Native_AFKReadyupIsKickPending);
+	CreateNative("AFKReadyup_GetLowestRemainingTime", Native_AFKReadyupGetLowestRemainingTime);
+
+	g_hFwdTrackingStarted		  = CreateGlobalForward("AFKReadyup_OnTrackingStarted", ET_Ignore);
+	g_hFwdTrackingStopped		  = CreateGlobalForward("AFKReadyup_OnTrackingStopped", ET_Ignore);
+	g_hFwdClientMoveToSpectator = CreateGlobalForward("AFKReadyup_OnClientMoveToSpectator", ET_Hook, Param_Cell, Param_Cell);
+	g_hFwdClientMovedToSpectator = CreateGlobalForward("AFKReadyup_OnClientMovedToSpectator", ET_Ignore, Param_Cell, Param_Cell);
+	g_hFwdClientKick			  = CreateGlobalForward("AFKReadyup_OnClientKick", ET_Hook, Param_Cell, Param_Cell);
+	g_hFwdClientKicked			  = CreateGlobalForward("AFKReadyup_OnClientKicked", ET_Ignore, Param_Cell);
+
+	RegPluginLibrary(AFKREADYUP_LIBRARY);
 }
 
 Action Command_Say(int iClient, int iArgs)
@@ -144,13 +167,9 @@ Action Command_Say(int iClient, int iArgs)
 
 public void OnPluginEnd()
 {
-	if (!g_cvarEnable.BoolValue)
-		return;
-
 	PrintDebug("Plugin End, timer null (%s)", (g_hStartTimerAFK != null) ? "true" : "false");
-
-	if (g_hStartTimerAFK != null)
-		delete g_hStartTimerAFK;
+	StopAfkTimer();
+	ResetAllClientState();
 }
 
 public void OnMapEnd()
@@ -159,31 +178,19 @@ public void OnMapEnd()
 	 * Sometimes the event 'round_start' is called before OnMapStart()
 	 * and the timer handle is not reset, so it's better to do it here.
 	 */
-	if (g_hStartTimerAFK != null)
-		delete g_hStartTimerAFK;
+	StopAfkTimer();
+	ResetAllClientState();
+	g_bGamePaused = false;
 }
 
 /*****************************************************************
 			F O R W A R D   P L U G I N S
 *****************************************************************/
-
 public OnReadyUpInitiate()
 {
 	if (!g_cvarEnable.BoolValue)
 		return;
-
-	if (g_cvarReadyFooter.BoolValue)
-	{
-		char sBuffer[64];
-		Format(sBuffer, sizeof(sBuffer), "%T", "Footer", LANG_SERVER, g_cvarTime.IntValue);
-		AddStringToReadyFooter("");
-		AddStringToReadyFooter(sBuffer);
-	}
-
-	if (g_hStartTimerAFK != null)
-		delete g_hStartTimerAFK;
-
-	g_hStartTimerAFK = CreateTimer(1.0, Timer_CheckAFK, _, TIMER_REPEAT);
+	StartReadyupAfkTracking();
 }
 
 public OnRoundIsLive()
@@ -192,17 +199,35 @@ public OnRoundIsLive()
 		return;
 
 	PrintDebug("Round is Live, timer null (%s)", (g_hStartTimerAFK != null) ? "true" : "false");
+	StopAfkTimer();
+	ResetAllClientState();
+	g_bGamePaused = false;
+	ResetReadyFooterState();
+}
 
-	if (g_hStartTimerAFK != null)
-		delete g_hStartTimerAFK;
+public void OnReadyCountdownCancelled(int client, char[] sDisruptReason)
+{
+	if (!g_cvarEnable.BoolValue || !g_bReadyUpAvailable || !IsInReady())
+		return;
 
-	for (int iClient = 1; iClient <= MaxClients; iClient++)
-	{
-		if (!IsClientInGame(iClient) || IsFakeClient(iClient))
-			continue;
+	PrintDebug("Ready countdown cancelled by client %d. reason=%s", client, sDisruptReason);
+	StartReadyupAfkTracking();
+}
 
-		ResetTimers(iClient);
-	}
+public void OnPlayerReady(int client)
+{
+	if (!g_cvarEnable.BoolValue || !g_bReadyUpAvailable || !IsInReady() || !IsHumanClient(client) || !CheckTeam(client))
+		return;
+
+	ResetTimers(client, false);
+}
+
+public void OnPlayerUnready(int client)
+{
+	if (!g_cvarEnable.BoolValue || !g_bReadyUpAvailable || !IsInReady() || !IsHumanClient(client) || !CheckTeam(client))
+		return;
+
+	ResetTimers(client, false);
 }
 
 /****************************************************************
@@ -253,18 +278,26 @@ void Event_PlayerTeam(Event hEvent, const char[] sName, bool bDontBroadcast)
 
 Action Timer_CheckAFK(Handle timer)
 {
+	if (g_bGamePaused)
+		return Plugin_Continue;
+
+	bool bIgnoreReady		 = g_cvarPlayerIgnore.BoolValue;
+	int	 iAfkTimeout		 = g_cvarTime.IntValue;
+	int	 iShowTimerThreshold = g_cvarShowTimer.IntValue;
+	bool bShowTimer			 = (iShowTimerThreshold > 0);
+
 	for (int i = 1; i <= MaxClients; i++)
 	{
-		if (!IsClientInGame(i) || IsFakeClient(i))
+		if (!IsHumanClient(i))
 			continue;
 
 		if (!CheckTeam(i))
 			continue;
 
-		if (g_cvarPlayerIgnore.BoolValue && IsReady(i))
+		if (bIgnoreReady && IsReady(i))
 			continue;
 
-		if (g_cvarShowTimer.BoolValue && g_iPlayerAFK[i] <= g_cvarShowTimer.IntValue)
+		if (bShowTimer && g_iPlayerAFK[i] <= iShowTimerThreshold)
 			CPrintToChat(i, "%t %t", "Tag", "ShowTimer", g_iPlayerAFK[i]);
 
 		if (PlayerPositionChanged(i))
@@ -284,17 +317,19 @@ Action Timer_CheckAFK(Handle timer)
 		if (g_iPlayerAFK[i] > 0)
 			continue;
 
-		L4D_ChangeClientTeam(i, L4DTeam_Spectator);
-		CPrintToChatAll("%t %t", "Tag", "MoveToSpec", i);
-		StartKickTimer(i); // Start the kick timer after moving to spectator
-	}
-	return Plugin_Continue;
-}
+		if (!AFKReadyup_OnClientMoveToSpectatorPre(i, iAfkTimeout))
+		{
+			ResetTimers(i, false);
+			continue;
+		}
 
-Action KickTimer_Callback(Handle timer, Handle hndl) {
-	if (g_bGamePaused) {
-		return Plugin_Continue;
+		L4D_ChangeClientTeam(i, L4DTeam_Spectator);
+		AFKReadyup_OnClientMovedToSpectatorPost(i, iAfkTimeout);
+		CPrintToChatAll("%t %t", "Tag", "MoveToSpec", i);
+		StartKickTimer(i);	  // Start the kick timer after moving to spectator
 	}
+
+	UpdateReadyFooter();
 	return Plugin_Continue;
 }
 
@@ -303,20 +338,23 @@ Action KickTimer_Callback(Handle timer, Handle hndl) {
  *
  * @param iClient The client index.
  */
-void StartKickTimer(int iClient) {
-    // Check if the kick delay is set to 0, if so, do not start the kick timer
-    if (g_cvarKickDelay.FloatValue <= 0.0) {
-        return;
-    }
+void StartKickTimer(int iClient)
+{
+	// Check if the kick delay is set to 0, if so, do not start the kick timer
+	if (g_cvarKickDelay.FloatValue <= 0.0)
+	{
+		return;
+	}
 
-    // Check if the player is in spectator mode
-    if (L4D_GetClientTeam(iClient) != L4DTeam_Spectator) {
-        return;
-    }
+	// Check if the player is in spectator mode
+	if (L4D_GetClientTeam(iClient) != L4DTeam_Spectator)
+	{
+		return;
+	}
 
-    SafeDeleteHandle(g_hKickTimer[iClient]);
+	SafeDeleteHandle(g_hKickTimer[iClient]);
 
-    g_hKickTimer[iClient] = CreateTimer(g_cvarKickDelay.FloatValue, Timer_KickPlayer, GetClientUserId(iClient));
+	g_hKickTimer[iClient] = CreateTimer(g_cvarKickDelay.FloatValue, Timer_KickPlayer, GetClientUserId(iClient));
 }
 
 /**
@@ -324,40 +362,56 @@ void StartKickTimer(int iClient) {
  *
  * @param timer The timer handle.
  */
-Action Timer_KickPlayer(Handle timer, int iUserId) {
-    int iClient = GetClientOfUserId(iUserId);
+Action Timer_KickPlayer(Handle timer, int iUserId)
+{
+	int iClient = GetClientOfUserId(iUserId);
 
-    if (iClient == 0 || !IsClientInGame(iClient) || IsFakeClient(iClient)) {
-        return Plugin_Stop;
-    }
+	if (iClient > 0 && iClient <= MaxClients)
+	{
+		g_hKickTimer[iClient] = null;
+	}
 
-    if (g_cvarKickDelay.FloatValue <= 0.0) {
-        return Plugin_Stop;
-    }
+	if (iClient == 0 || !IsClientInGame(iClient) || IsFakeClient(iClient))
+	{
+		return Plugin_Stop;
+	}
 
-    // Check if the player is still in spectator mode
-    if (L4D_GetClientTeam(iClient) != L4DTeam_Spectator) {
-        return Plugin_Stop;
-    }
+	if (g_cvarKickDelay.FloatValue <= 0.0)
+	{
+		return Plugin_Stop;
+	}
 
-    g_hKickTimer[iClient] = null;
+	// Check if the player is still in spectator mode
+	if (L4D_GetClientTeam(iClient) != L4DTeam_Spectator)
+	{
+		return Plugin_Stop;
+	}
 
-    char sName[MAX_NAME_LENGTH];
-    GetClientName(iClient, sName, sizeof(sName));
-    CPrintToChatAll("%t %T", "Tag", "KickMessage", LANG_SERVER, sName);
-    KickClient(iClient, "You were kicked for being AFK for too long.");
+	char sName[MAX_NAME_LENGTH];
+	int iKickDelay = RoundToNearest(g_cvarKickDelay.FloatValue);
+	if (!AFKReadyup_OnClientKickPre(iClient, iKickDelay))
+	{
+		return Plugin_Stop;
+	}
 
-    return Plugin_Stop;
+	GetClientName(iClient, sName, sizeof(sName));
+	CPrintToChatAll("%t %T", "Tag", "KickMessage", LANG_SERVER, sName);
+	KickClient(iClient, "You were kicked for being AFK for too long.");
+	AFKReadyup_OnClientKickedPost(iClient);
+
+	return Plugin_Stop;
 }
 
-Action OnCommandExecute(int client, const char[] command, int argc) {
-	if (client > 0 && IsClientInGame(client) && !IsFakeClient(client)) {
-		g_iLastActivity[client] = GetTime();
-		ResetTimers(client, false); // Reset the AFK timer on any command execution, regardless of team
+Action OnCommandExecute(int client, const char[] command, int argc)
+{
+	if (g_cvarEnable.BoolValue && g_bReadyUpAvailable && IsInReady() && IsHumanClient(client) && CheckTeam(client))
+	{
+		ResetTimers(client, false);
 	}
 
 	// Handle pause/unpause state tracking
-	if (StrEqual(command, "pause", false)) {
+	if (StrEqual(command, "pause", false))
+	{
 		g_bGamePaused = true;
 	}
 	else if (StrEqual(command, "unpause", false)) {
@@ -367,50 +421,44 @@ Action OnCommandExecute(int client, const char[] command, int argc) {
 	return Plugin_Continue;
 }
 
-public void OnPlayerRunCmdPost(int client, int buttons, int impulse, const float vel[3], const float angles[3], int weapon, int subtype, int cmdnum, int tickcount, int seed, const int mouse[2]) {
-	if (g_bGamePaused) return;
+public void OnPlayerRunCmdPost(int client, int buttons, int impulse, const float vel[3], const float angles[3], int weapon, int subtype, int cmdnum, int tickcount, int seed, const int mouse[2])
+{
+	if (g_bGamePaused || !g_cvarEnable.BoolValue || !g_bReadyUpAvailable || !IsInReady())
+		return;
 
-	if (client > 0 && client <= MaxClients && (g_iPrevButtons[client] != buttons || g_iPrevMouse[client][0] != mouse[0] || g_iPrevMouse[client][1] != mouse[1]) && IsClientInGame(client) && !IsFakeClient(client)) {
-		g_iPrevButtons[client] = buttons;
+	if (!IsHumanClient(client) || !CheckTeam(client))
+		return;
+
+	if (g_iPrevButtons[client] != buttons || g_iPrevMouse[client][0] != mouse[0] || g_iPrevMouse[client][1] != mouse[1])
+	{
+		g_iPrevButtons[client]	= buttons;
 		g_iPrevMouse[client][0] = mouse[0];
 		g_iPrevMouse[client][1] = mouse[1];
-		g_iLastActivity[client] = GetTime();
-		ResetTimers(client, false); // Reset the AFK timer on any player movement, regardless of team
+		ResetTimers(client, false);
 	}
 }
 
-public void OnClientConnected(int client) {
-	g_iLastActivity[client] = 0;
-	g_iLastMessageTime[client] = 0; // Initialize the last message time
+public void OnClientConnected(int client)
+{
+	ResetClientState(client);
 }
 
-public void OnClientDisconnect_Post(int client) {
-	g_iLastActivity[client] = 0;
-	g_iLastMessageTime[client] = 0; // Reset the last message time
+public void OnClientDisconnect_Post(int client)
+{
+	ResetClientState(client);
 }
 
-public void OnClientPutInServer(int client) {
-    if (client > 0 && IsClientInGame(client) && !IsFakeClient(client)) {
-        g_iLastActivity[client] = GetTime();
-        g_iLastMessageTime[client] = GetTime();
+public void OnClientPutInServer(int client)
+{
+	ResetClientState(client);
 
-        // If the player is placed into spectator mode upon joining, set a specific AFK timer
-        if (L4D_GetClientTeam(client) == L4DTeam_Spectator) {
-            g_iPlayerAFK[client] = 600; // 600 seconds grace period for spectators
-        } else {
-            ResetTimers(client);
-        }
-    }
-}
+	if (!g_cvarEnable.BoolValue || !g_bReadyUpAvailable || !IsInReady())
+		return;
 
-public Action Cmd_AFKs(client, args) {
-	int iTime = GetTime();
-	for (int i = 1; i <= MaxClients; i++) {
-		if (IsClientInGame(i) && !IsFakeClient(i)) {
-			ReplyToCommand(client, "%N : last activity %d seconds ago", i, iTime - g_iLastActivity[i]);
-		}
-	}
-	return Plugin_Handled;
+	if (!IsHumanClient(client) || !CheckTeam(client))
+		return;
+
+	ResetTimers(client);
 }
 
 /**
@@ -435,7 +483,7 @@ bool PlayerPositionChanged(int iClient)
 {
 	float fPos[3];
 	GetClientAbsOrigin(iClient, fPos);
-	return GetVectorDistance(fPos, g_fPlayerLastPos[iClient]) > 80.0;
+	return GetVectorDistance(fPos, g_fPlayerLastPos[iClient], true) > 6400.0;
 }
 
 /**
@@ -448,7 +496,13 @@ bool PlayerEyesChanged(int iClient)
 {
 	float fEyes[3];
 	GetClientEyeAngles(iClient, fEyes);
-	return fEyes[0] != g_fPlayerLastEyes[iClient][0] && fEyes[1] != g_fPlayerLastEyes[iClient][1];
+
+	float fPitchDelta = FloatAbs(fEyes[0] - g_fPlayerLastEyes[iClient][0]);
+	float fYawDelta	  = FloatAbs(fEyes[1] - g_fPlayerLastEyes[iClient][1]);
+	if (fYawDelta > 180.0)
+		fYawDelta = 360.0 - fYawDelta;
+
+	return fPitchDelta >= 2.0 || fYawDelta >= 2.0;
 }
 
 /**
@@ -459,24 +513,221 @@ bool PlayerEyesChanged(int iClient)
  */
 void ResetTimers(int iClient, bool bCheckTeam = true)
 {
-    PrintDebug("Resetting timers for client %d", iClient);
+	PrintDebug("Resetting timers for client %d", iClient);
 
-    if (bCheckTeam && !CheckTeam(iClient))
-        return;
+	if (bCheckTeam && !CheckTeam(iClient))
+		return;
 
-    g_iPlayerAFK[iClient] = g_cvarTime.IntValue;
-    GetClientAbsOrigin(iClient, g_fPlayerLastPos[iClient]);
-    GetClientEyeAngles(iClient, g_fPlayerLastEyes[iClient]);
-    g_iLastActivity[iClient] = GetTime();
+	g_iPlayerAFK[iClient] = g_cvarTime.IntValue;
+	GetClientAbsOrigin(iClient, g_fPlayerLastPos[iClient]);
+	GetClientEyeAngles(iClient, g_fPlayerLastEyes[iClient]);
+	SafeDeleteHandle(g_hKickTimer[iClient]);
+}
 
-    // Cancel kick timer if player became active after being moved to spectator
-    SafeDeleteHandle(g_hKickTimer[iClient]);
+void StopAfkTimer()
+{
+	bool bWasTracking = (g_hStartTimerAFK != null);
+	SafeDeleteHandle(g_hStartTimerAFK);
+	if (bWasTracking)
+		AFKReadyup_OnTrackingStoppedPost();
+}
 
-    // Restart the kick timer if the player is in spectator mode and shows activity
-    if (L4D_GetClientTeam(iClient) == L4DTeam_Spectator && g_cvarKickDelay.FloatValue > 0.0)
-    {
-        StartKickTimer(iClient);
-    }
+void StartReadyupAfkTracking()
+{
+	StopAfkTimer();
+	ResetAllClientState();
+	ResetReadyFooterState();
+
+	for (int iClient = 1; iClient <= MaxClients; iClient++)
+	{
+		if (!IsHumanClient(iClient) || !CheckTeam(iClient))
+			continue;
+
+		ResetTimers(iClient, false);
+	}
+
+	UpdateReadyFooter();
+	g_hStartTimerAFK = CreateTimer(1.0, Timer_CheckAFK, _, TIMER_REPEAT);
+	AFKReadyup_OnTrackingStartedPost();
+}
+
+bool AFKReadyup_OnClientMoveToSpectatorPre(int client, int timeoutSeconds)
+{
+	if (g_hFwdClientMoveToSpectator == null)
+		return true;
+
+	Action result = Plugin_Continue;
+	Call_StartForward(g_hFwdClientMoveToSpectator);
+	Call_PushCell(client);
+	Call_PushCell(timeoutSeconds);
+	Call_Finish(result);
+
+	return (result < Plugin_Handled);
+}
+
+void AFKReadyup_OnClientMovedToSpectatorPost(int client, int timeoutSeconds)
+{
+	if (g_hFwdClientMovedToSpectator == null)
+		return;
+
+	Call_StartForward(g_hFwdClientMovedToSpectator);
+	Call_PushCell(client);
+	Call_PushCell(timeoutSeconds);
+	Call_Finish();
+}
+
+bool AFKReadyup_OnClientKickPre(int client, int kickDelay)
+{
+	if (g_hFwdClientKick == null)
+		return true;
+
+	Action result = Plugin_Continue;
+	Call_StartForward(g_hFwdClientKick);
+	Call_PushCell(client);
+	Call_PushCell(kickDelay);
+	Call_Finish(result);
+
+	return (result < Plugin_Handled);
+}
+
+void AFKReadyup_OnClientKickedPost(int client)
+{
+	if (g_hFwdClientKicked == null)
+		return;
+
+	Call_StartForward(g_hFwdClientKicked);
+	Call_PushCell(client);
+	Call_Finish();
+}
+
+void AFKReadyup_OnTrackingStartedPost()
+{
+	if (g_hFwdTrackingStarted == null)
+		return;
+
+	Call_StartForward(g_hFwdTrackingStarted);
+	Call_Finish();
+}
+
+void AFKReadyup_OnTrackingStoppedPost()
+{
+	if (g_hFwdTrackingStopped == null)
+		return;
+
+	Call_StartForward(g_hFwdTrackingStopped);
+	Call_Finish();
+}
+
+public any Native_AFKReadyupIsTrackingActive(Handle plugin, int numParams)
+{
+	return (g_hStartTimerAFK != null);
+}
+
+public any Native_AFKReadyupGetClientSecondsRemaining(Handle plugin, int numParams)
+{
+	int client = GetNativeCell(1);
+	if (!IsValidClientIndex(client))
+		return 0;
+
+	return g_iPlayerAFK[client];
+}
+
+public any Native_AFKReadyupResetClientTimer(Handle plugin, int numParams)
+{
+	int client = GetNativeCell(1);
+	if (!g_cvarEnable.BoolValue || !g_bReadyUpAvailable || !IsInReady() || !IsHumanClient(client) || !CheckTeam(client))
+		return false;
+
+	ResetTimers(client, false);
+	return true;
+}
+
+public any Native_AFKReadyupIsKickPending(Handle plugin, int numParams)
+{
+	int client = GetNativeCell(1);
+	if (!IsValidClientIndex(client))
+		return false;
+
+	return (g_hKickTimer[client] != null);
+}
+
+public any Native_AFKReadyupGetLowestRemainingTime(Handle plugin, int numParams)
+{
+	return GetLowestTrackedAfkTime();
+}
+
+void ResetClientState(int client)
+{
+	if (!IsValidClientIndex(client))
+		return;
+
+	g_iPlayerAFK[client]		 = 0;
+	g_iPrevButtons[client]		 = 0;
+	g_iPrevMouse[client][0]		 = 0;
+	g_iPrevMouse[client][1]		 = 0;
+	g_fPlayerLastPos[client][0]	 = 0.0;
+	g_fPlayerLastPos[client][1]	 = 0.0;
+	g_fPlayerLastPos[client][2]	 = 0.0;
+	g_fPlayerLastEyes[client][0] = 0.0;
+	g_fPlayerLastEyes[client][1] = 0.0;
+	g_fPlayerLastEyes[client][2] = 0.0;
+	SafeDeleteHandle(g_hKickTimer[client]);
+}
+
+void ResetAllClientState()
+{
+	for (int client = 1; client <= MaxClients; client++)
+		ResetClientState(client);
+}
+
+void ResetReadyFooterState()
+{
+	g_iReadyFooterIndex		  = -1;
+	g_bReadyFooterSpacerAdded = false;
+}
+
+int GetLowestTrackedAfkTime()
+{
+	int	 iLowest	  = g_cvarTime.IntValue;
+	bool bFound		  = false;
+	bool bIgnoreReady = g_cvarPlayerIgnore.BoolValue;
+
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (!IsHumanClient(client) || !CheckTeam(client))
+			continue;
+
+		if (bIgnoreReady && IsReady(client))
+			continue;
+
+		if (!bFound || g_iPlayerAFK[client] < iLowest)
+		{
+			iLowest = g_iPlayerAFK[client];
+			bFound	= true;
+		}
+	}
+
+	return bFound ? iLowest : g_cvarTime.IntValue;
+}
+
+void UpdateReadyFooter()
+{
+	if (!g_cvarReadyFooter.BoolValue || !g_bReadyUpAvailable || !IsInReady())
+		return;
+
+	char sBuffer[64];
+	Format(sBuffer, sizeof(sBuffer), "%T", "Footer", LANG_SERVER, GetLowestTrackedAfkTime());
+
+	if (g_iReadyFooterIndex != -1 && EditFooterStringAtIndex(g_iReadyFooterIndex, sBuffer))
+		return;
+
+	if (!g_bReadyFooterSpacerAdded)
+	{
+		AddStringToReadyFooter("");
+		g_bReadyFooterSpacerAdded = true;
+	}
+
+	g_iReadyFooterIndex = AddStringToReadyFooter(sBuffer);
 }
 
 /**
@@ -486,11 +737,11 @@ void ResetTimers(int iClient, bool bCheckTeam = true)
  */
 void SafeDeleteHandle(Handle &h)
 {
-    if (h != null && IsValidHandle(h))
-    {
-        delete h;
-        h = null;
-    }
+	if (h != null && IsValidHandle(h))
+	{
+		delete h;
+		h = null;
+	}
 }
 
 /**
@@ -545,6 +796,11 @@ stock void L4D_ChangeClientTeam(int client, L4DTeam team)
 stock bool IsValidClientIndex(int iClient)
 {
 	return iClient > 0 && iClient <= MaxClients;
+}
+
+stock bool IsHumanClient(int iClient)
+{
+	return IsValidClientIndex(iClient) && IsClientInGame(iClient) && !IsFakeClient(iClient);
 }
 
 /**
