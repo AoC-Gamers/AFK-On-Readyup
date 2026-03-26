@@ -4,10 +4,16 @@ Todos los cambios importantes de este proyecto se documentan en este archivo.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-26
+
 ### Added
 - Flujo de GitHub Actions para compilar el plugin y generar artefactos instalables.
 - Workflow de release por tags para publicar el zip en GitHub Releases.
 - Scripts de CI para build, validacion del artefacto y empaquetado.
+- API publica inicial para integraciones via la libreria afkreadyup, con natives de consulta y forwards pre/post de enforcement.
+
+### Changed
+- El artifact instalable conserva AFKReadyup.sp y el include publico afkreadyup.inc, y deja fuera includes usados solo para compilar.
 
 ## [1.1.6] - 2025-05-11
 

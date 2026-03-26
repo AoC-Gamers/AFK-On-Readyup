@@ -23,9 +23,7 @@ if not os.path.isfile(plugin_path):
 scripting_dir = os.path.join(artifact_dir, "addons", "sourcemod", "scripting")
 for relative_path in [
     os.path.join("AFKReadyup.sp"),
-    os.path.join("include", "autoexecconfig.inc"),
-    os.path.join("include", "colors.inc"),
-    os.path.join("include", "readyup.inc"),
+    os.path.join("include", "afkreadyup.inc"),
 ]:
     path = os.path.join(scripting_dir, relative_path)
     if not os.path.isfile(path):
@@ -39,10 +37,6 @@ for relative_path in [
     path = os.path.join(translations_dir, relative_path)
     if not os.path.isfile(path):
         raise SystemExit(f"Missing translation artifact: {path}")
-
-cfg_path = os.path.join(artifact_dir, "cfg", "sourcemod", "AFKReadyup.cfg")
-if not os.path.isfile(cfg_path):
-    raise SystemExit(f"Missing config artifact: {cfg_path}")
 
 compile_log = os.path.join(artifact_dir, "compile.log")
 if not os.path.isfile(compile_log):

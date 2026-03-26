@@ -25,7 +25,6 @@ PACKAGE_SCRIPTING_DIR="$PACKAGE_SM_DIR/scripting"
 PACKAGE_INCLUDE_DIR="$PACKAGE_SCRIPTING_DIR/include"
 PACKAGE_TRANSLATIONS_DIR="$PACKAGE_SM_DIR/translations"
 PACKAGE_TRANSLATIONS_ES_DIR="$PACKAGE_TRANSLATIONS_DIR/es"
-PACKAGE_CFG_DIR="$ARTIFACT_DIR/cfg/sourcemod"
 COMPILE_LOG="$ARTIFACT_DIR/compile.log"
 
 mkdir -p \
@@ -33,8 +32,7 @@ mkdir -p \
   "$PACKAGE_SCRIPTING_DIR" \
   "$PACKAGE_INCLUDE_DIR" \
   "$PACKAGE_TRANSLATIONS_DIR" \
-  "$PACKAGE_TRANSLATIONS_ES_DIR" \
-  "$PACKAGE_CFG_DIR"
+  "$PACKAGE_TRANSLATIONS_ES_DIR"
 
 : > "$COMPILE_LOG"
 
@@ -51,12 +49,9 @@ if [[ ! -f "$PACKAGE_PLUGIN_DIR/AFKReadyup.smx" ]]; then
   exit 1
 fi
 
+cp "$ROOT_DIR/addons/sourcemod/scripting/include/afkreadyup.inc" "$PACKAGE_INCLUDE_DIR/"
 cp "$ROOT_DIR/addons/sourcemod/scripting/AFKReadyup.sp" "$PACKAGE_SCRIPTING_DIR/"
-cp "$ROOT_DIR/addons/sourcemod/scripting/include/autoexecconfig.inc" "$PACKAGE_INCLUDE_DIR/"
-cp "$ROOT_DIR/addons/sourcemod/scripting/include/colors.inc" "$PACKAGE_INCLUDE_DIR/"
-cp "$ROOT_DIR/addons/sourcemod/scripting/include/readyup.inc" "$PACKAGE_INCLUDE_DIR/"
 cp "$ROOT_DIR/addons/sourcemod/translations/AFKReadyup.phrases.txt" "$PACKAGE_TRANSLATIONS_DIR/"
 cp "$ROOT_DIR/addons/sourcemod/translations/es/AFKReadyup.phrases.txt" "$PACKAGE_TRANSLATIONS_ES_DIR/"
-cp "$ROOT_DIR/cfg/sourcemod/AFKReadyup.cfg" "$PACKAGE_CFG_DIR/"
 
 echo "SourceMod artifacts generated in $ARTIFACT_DIR"
