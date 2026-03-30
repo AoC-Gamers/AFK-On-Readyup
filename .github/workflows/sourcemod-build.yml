@@ -20,6 +20,9 @@ concurrency:
   group: sourcemod-build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 env:
   SOURCEMOD_ARCHIVE_URL: https://sm.alliedmods.net/smdrop/1.12/sourcemod-1.12.0-git7223-linux.tar.gz
 
@@ -70,3 +73,51 @@ jobs:
           path: dist/release/${{ steps.artifact.outputs.basename }}.zip
           if-no-files-found: error
           retention-days: 14
+
+      - name: Resolve channel release metadata
+        id: channel
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            main|master)
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              echo "tag=channel/latest" >> "$GITHUB_OUTPUT"
+              echo "title=AFK on ReadyUp latest" >> "$GITHUB_OUTPUT"
+              ;;
+            develop)
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              echo "tag=channel/develop" >> "$GITHUB_OUTPUT"
+              echo "title=AFK on ReadyUp develop" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Publish channel release
+        if: steps.channel.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${{ steps.channel.outputs.tag }}"
+          title="${{ steps.channel.outputs.title }}"
+          asset="dist/release/${{ steps.artifact.outputs.basename }}.zip"
+          short_sha="${GITHUB_SHA::7}"
+          notes_file="dist/release/channel-release-notes.md"
+
+          printf 'Automated channel release for branch %s at commit %s.\n' "${GITHUB_REF_NAME}" "$short_sha" > "$notes_file"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag" --force
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$title" --notes-file "$notes_file" --latest=false
+            gh release upload "$tag" "$asset" --clobber
+            exit 0
+          fi
+
+          gh release create "$tag" "$asset" --title "$title" --notes-file "$notes_file" --latest=false

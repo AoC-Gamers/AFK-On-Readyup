@@ -86,6 +86,13 @@ El artifact instalable conserva solo el contenido propio y publico del plugin:
 
 No se incluyen dependencias usadas solo para compilar.
 
+Ademas del artifact efimero del workflow, el repositorio publica releases de canal para consumo automatizado:
+
+- `channel/latest` para `main` o `master`
+- `channel/develop` para `develop`
+
+Cada canal adjunta un zip instalable del plugin listo para ser consumido por stacks externos que resuelven assets de GitHub Releases.
+
 ## API publica
 
 El plugin expone un include publico para integraciones con otros plugins.
