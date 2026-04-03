@@ -103,10 +103,10 @@ public void OnPluginStart()
 	g_cvarDebug		   = CreateConVar("sm_afk_debug", "0", "Debug messages", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_cvarEnable	   = CreateConVar("sm_afk_enable", "1", "Activate the plugin", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_cvarPlayerIgnore = CreateConVar("sm_afk_ignore", "1", "Ignore players ready", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	g_cvarTime		   = CreateConVar("sm_afk_time", "40", "Time to move players during readyup", FCVAR_NOTIFY, true, 0.0);
+	g_cvarTime		   = CreateConVar("sm_afk_time", "90", "Time to move players during readyup", FCVAR_NOTIFY, true, 0.0);
 	g_cvarReadyFooter  = CreateConVar("sm_afk_footer", "1", "Show ready footer (0 = disabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_cvarShowTimer	   = CreateConVar("sm_afk_show", "10", "Show timer to players (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
-	g_cvarKickDelay	   = CreateConVar("sm_afk_kick_delay", "120", "Delay (in seconds) before kicking player from server after moving to spectator (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
+	g_cvarKickDelay	   = CreateConVar("sm_afk_kick_delay", "360", "Delay (in seconds) before kicking player from server after moving to spectator (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
 
 	AutoExecConfig(true, "AFKReadyup");
 
@@ -716,7 +716,7 @@ void UpdateReadyFooter()
 		return;
 
 	char sBuffer[64];
-	Format(sBuffer, sizeof(sBuffer), "%T", "Footer", LANG_SERVER, GetLowestTrackedAfkTime());
+	Format(sBuffer, sizeof(sBuffer), "%T", "Footer", LANG_SERVER, g_cvarTime.IntValue);
 
 	if (g_iReadyFooterIndex != -1 && EditFooterStringAtIndex(g_iReadyFooterIndex, sBuffer))
 		return;
