@@ -44,9 +44,9 @@ Handle
 bool
 	g_bLateLoad,
 	g_bReadyUpAvailable,
-	g_bReadyFooterSpacerAdded,
 	g_bGamePaused		= false;
 
+int g_iReadyFooterSpacerIndex = -1;
 int g_iReadyFooterIndex = -1;
 
 enum L4DTeam
@@ -107,11 +107,13 @@ public void OnPluginStart()
 	g_cvarReadyFooter  = CreateConVar("sm_afk_footer", "1", "Show ready footer (0 = disabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_cvarShowTimer	   = CreateConVar("sm_afk_show", "10", "Show timer to players (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
 	g_cvarKickDelay	   = CreateConVar("sm_afk_kick_delay", "360", "Delay (in seconds) before kicking player from server after moving to spectator (0 = disabled)", FCVAR_NOTIFY, true, 0.0);
+	g_cvarEnable.AddChangeHook(OnAfkEnableChanged);
 
 	AutoExecConfig(true, "AFKReadyup");
 
 	RegConsoleCmd("say", Command_Say);
 	RegConsoleCmd("say_team", Command_Say);
+	RegAdminCmd("sm_afk_disable", Command_AfkDisable, ADMFLAG_ROOT, "Disable AFK tracking and clear active timers/footer.");
 
 	HookEvent("entity_shoved", Event_PlayerAction_Attacker);
 	HookEvent("weapon_fire", Event_PlayerAction_UserID);
@@ -133,6 +135,35 @@ public void OnPluginStart()
 		return;
 
 	g_bReadyUpAvailable = LibraryExists("readyup");
+}
+
+public void OnAfkEnableChanged(ConVar convar, const char[] oldValue, const char[] newValue)
+{
+	bool bWasEnabled = (StringToInt(oldValue) != 0);
+	bool bIsEnabled = (StringToInt(newValue) != 0);
+
+	if (bWasEnabled && !bIsEnabled)
+	{
+		DisableAfkTracking();
+		return;
+	}
+
+	if (!bWasEnabled && bIsEnabled && g_bReadyUpAvailable && IsInReady())
+		StartReadyupAfkTracking();
+}
+
+Action Command_AfkDisable(int client, int args)
+{
+	if (!g_cvarEnable.BoolValue)
+	{
+		ReplyToCommand(client, "[AFK] AFK tracking is already disabled.");
+		DisableAfkTracking();
+		return Plugin_Handled;
+	}
+
+	g_cvarEnable.SetBool(false);
+	ReplyToCommand(client, "[AFK] AFK tracking disabled and state cleared.");
+	return Plugin_Handled;
 }
 
 void AFKReadyup_RegisterApi()
@@ -170,6 +201,7 @@ public void OnPluginEnd()
 	PrintDebug("Plugin End, timer null (%s)", (g_hStartTimerAFK != null) ? "true" : "false");
 	StopAfkTimer();
 	ResetAllClientState();
+	ClearReadyFooter();
 }
 
 public void OnMapEnd()
@@ -181,6 +213,7 @@ public void OnMapEnd()
 	StopAfkTimer();
 	ResetAllClientState();
 	g_bGamePaused = false;
+	ClearReadyFooter();
 }
 
 /*****************************************************************
@@ -202,7 +235,7 @@ public OnRoundIsLive()
 	StopAfkTimer();
 	ResetAllClientState();
 	g_bGamePaused = false;
-	ResetReadyFooterState();
+	ClearReadyFooter();
 }
 
 public void OnReadyCountdownCancelled(int client, char[] sDisruptReason)
@@ -264,12 +297,18 @@ void Event_PlayerTeam(Event hEvent, const char[] sName, bool bDontBroadcast)
 		return;
 
 	int iClient = GetClientOfUserId(hEvent.GetInt("userid"));
-	if (!IsClientInGame(iClient) || IsFakeClient(iClient))
+	if (!IsValidClientIndex(iClient) || !IsClientInGame(iClient) || IsFakeClient(iClient))
 		return;
 
 	L4DTeam Team = view_as<L4DTeam>(GetEventInt(hEvent, "team"));
 	if (Team == L4DTeam_Survivor || Team == L4DTeam_Infected)
+	{
 		ResetTimers(iClient, false);
+		return;
+	}
+
+	if (Team == L4DTeam_Spectator || Team == L4DTeam_Unassigned)
+		ResetClientState(iClient);
 }
 
 /*****************************************************************
@@ -532,11 +571,19 @@ void StopAfkTimer()
 		AFKReadyup_OnTrackingStoppedPost();
 }
 
+void DisableAfkTracking()
+{
+	StopAfkTimer();
+	ResetAllClientState();
+	ClearReadyFooter();
+	g_bGamePaused = false;
+}
+
 void StartReadyupAfkTracking()
 {
 	StopAfkTimer();
 	ResetAllClientState();
-	ResetReadyFooterState();
+	ClearReadyFooter();
 
 	for (int iClient = 1; iClient <= MaxClients; iClient++)
 	{
@@ -682,8 +729,22 @@ void ResetAllClientState()
 
 void ResetReadyFooterState()
 {
+	g_iReadyFooterSpacerIndex = -1;
 	g_iReadyFooterIndex		  = -1;
-	g_bReadyFooterSpacerAdded = false;
+}
+
+void ClearReadyFooter()
+{
+	if (g_bReadyUpAvailable && IsInReady())
+	{
+		if (g_iReadyFooterSpacerIndex != -1)
+			EditFooterStringAtIndex(g_iReadyFooterSpacerIndex, "");
+
+		if (g_iReadyFooterIndex != -1)
+			EditFooterStringAtIndex(g_iReadyFooterIndex, "");
+	}
+
+	ResetReadyFooterState();
 }
 
 int GetLowestTrackedAfkTime()
@@ -721,10 +782,9 @@ void UpdateReadyFooter()
 	if (g_iReadyFooterIndex != -1 && EditFooterStringAtIndex(g_iReadyFooterIndex, sBuffer))
 		return;
 
-	if (!g_bReadyFooterSpacerAdded)
+	if (g_iReadyFooterSpacerIndex == -1)
 	{
-		AddStringToReadyFooter("");
-		g_bReadyFooterSpacerAdded = true;
+		g_iReadyFooterSpacerIndex = AddStringToReadyFooter("");
 	}
 
 	g_iReadyFooterIndex = AddStringToReadyFooter(sBuffer);
