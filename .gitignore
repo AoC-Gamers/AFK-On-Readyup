@@ -1,4 +1,15 @@
 
 /.vscode
+/.build
+/build
+/build-linux
+/build-windows
 /dist
+/deps
 /.tmp
+__pycache__/
+*.pyc
+*.log
+*.zip
+*.tar
+*.tar.gz

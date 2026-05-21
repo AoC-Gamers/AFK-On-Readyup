@@ -1,0 +1,28 @@
+{
+  "build": {
+    "plugins": {
+      "root": [
+        "AFKReadyup"
+      ]
+    }
+  },
+  "artifact": {
+    "addons": {
+      "sourcemod": {
+        "scripting": {
+          "files": [
+            "AFKReadyup.sp"
+          ],
+          "include": {
+            "files": [
+              "afkreadyup.inc"
+            ]
+          }
+        },
+        "translations": {
+          "all": true
+        }
+      }
+    }
+  }
+}

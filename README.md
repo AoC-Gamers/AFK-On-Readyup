@@ -111,3 +111,18 @@ Como los nombres exactos de natives y forwards pueden evolucionar entre versione
 El proyecto separa el codigo principal del plugin de su include publico para integraciones.
 
 Para revisar cambios recientes y compatibilidad, consulta CHANGELOG.md.
+
+## Build local
+
+El repositorio usa el mismo flujo base en desarrollo local y en CI.
+
+Comandos:
+
+- `make deps-smx`
+- `make build-smx`
+- `make package-smx`
+- `make release`
+
+El manifiesto [plugin-package-map.json](plugin-package-map.json) define que se compila y que entra al artifact final.
+
+Mas detalle del sistema de build en [docs/BUILD_SYSTEM.md](docs/BUILD_SYSTEM.md).
