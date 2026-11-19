@@ -121,7 +121,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  release:
+  package:
     runs-on: ubuntu-latest
     needs: build-smx
     outputs:
@@ -184,7 +184,7 @@ jobs:
 
   publish-channel:
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
-    needs: release
+    needs: package
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -196,25 +196,25 @@ jobs:
       - name: Download validated ZIP
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.release.outputs.basename }}
+          name: ${{ needs.package.outputs.basename }}
           path: dist/release
 
       - name: Publish channel release
-        if: needs.release.outputs.enabled == 'true' && github.event_name != 'pull_request'
+        if: needs.package.outputs.enabled == 'true' && github.event_name != 'pull_request'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "${{ needs.release.outputs.tag }}" "$GITHUB_SHA"
-          git push origin "refs/tags/${{ needs.release.outputs.tag }}" --force
+          git tag -f "${{ needs.package.outputs.tag }}" "$GITHUB_SHA"
+          git push origin "refs/tags/${{ needs.package.outputs.tag }}" --force
 
       - name: Upload channel asset
-        if: needs.release.outputs.enabled == 'true' && github.event_name != 'pull_request'
+        if: needs.package.outputs.enabled == 'true' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.release.outputs.tag }}
-          name: ${{ needs.release.outputs.title }}
-          files: dist/release/${{ needs.release.outputs.basename }}.zip
+          tag_name: ${{ needs.package.outputs.tag }}
+          name: ${{ needs.package.outputs.title }}
+          files: dist/release/${{ needs.package.outputs.basename }}.zip
           draft: false
-          prerelease: ${{ needs.release.outputs.tag == 'channel/develop' }}
-          make_latest: ${{ needs.release.outputs.tag == 'channel/latest' }}
+          prerelease: ${{ needs.package.outputs.tag == 'channel/develop' }}
+          make_latest: ${{ needs.package.outputs.tag == 'channel/latest' }}
