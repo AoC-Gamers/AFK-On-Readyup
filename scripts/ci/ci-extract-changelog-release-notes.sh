@@ -9,7 +9,7 @@ fi
 
 VERSION="$1"
 OUTPUT_FILE="$2"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHANGELOG_FILE="$ROOT_DIR/CHANGELOG.md"
 
 if [[ ! -f "$CHANGELOG_FILE" ]]; then
